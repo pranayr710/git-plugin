@@ -120,7 +120,22 @@ public class DefaultBuildChooser extends BuildChooser {
                 verbose(listener, "{0} seems to be a non-branch reference (tag?)");
             }
         }
-        
+
+        // As in the advanced case, prefer revisions that have not been built yet. Otherwise, with several
+        // remotes, a new commit on a later remote is never built because an earlier remote's head comes first.
+        if (!isPollCall && data != null && revisions.size() > 1) {
+            Collection<Revision> notBuilt = new LinkedHashSet<>();
+            for (Revision revision : revisions) {
+                if (!data.hasBeenBuilt(revision.getSha1())) {
+                    notBuilt.add(revision);
+                }
+            }
+            if (!notBuilt.isEmpty()) {
+                verbose(listener, "Preferring revisions not built yet: {0}", notBuilt);
+                revisions = notBuilt;
+            }
+        }
+
         return revisions;
     }
 
