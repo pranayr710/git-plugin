@@ -44,6 +44,16 @@ public class DefaultBuildChooser extends BuildChooser {
     public Collection<Revision> getCandidateRevisions(boolean isPollCall, String branchSpec,
                                                       GitClient git, TaskListener listener, BuildData data, BuildChooserContext context)
             throws GitException, IOException, InterruptedException {
+        Collection<Revision> revisions = getCandidateRevisionsInRemoteOrder(isPollCall, branchSpec, git, listener, data, context);
+        return preferNotBuilt(isPollCall, branchSpec, revisions, listener, data);
+    }
+
+    /**
+     * Candidate revisions before {@link #preferNotBuilt} is applied, so that subclasses can filter them first.
+     */
+    Collection<Revision> getCandidateRevisionsInRemoteOrder(boolean isPollCall, String branchSpec,
+                                                            GitClient git, TaskListener listener, BuildData data, BuildChooserContext context)
+            throws GitException, IOException, InterruptedException {
 
         verbose(listener,"getCandidateRevisions({0},{1},,,{2}) considering branches to build",isPollCall,branchSpec,data);
 
@@ -121,22 +131,31 @@ public class DefaultBuildChooser extends BuildChooser {
             }
         }
 
-        // As in the advanced case, prefer revisions that have not been built yet. Otherwise, with several
-        // remotes, a new commit on a later remote is never built because an earlier remote's head comes first.
-        if (!isPollCall && data != null && revisions.size() > 1) {
-            Collection<Revision> notBuilt = new LinkedHashSet<>();
-            for (Revision revision : revisions) {
-                if (!data.hasBeenBuilt(revision.getSha1())) {
-                    notBuilt.add(revision);
-                }
-            }
-            if (!notBuilt.isEmpty()) {
-                verbose(listener, "Preferring revisions not built yet: {0}", notBuilt);
-                revisions = notBuilt;
+        return revisions;
+    }
+
+    /**
+     * When an unqualified branch such as {@code master} matches a head on several remotes, prefer the heads that
+     * were not built yet, as the advanced case does. Otherwise a new commit on a later remote is never built,
+     * because an earlier remote's head comes first. The candidates are returned unchanged if all of them were built.
+     * Other branch specifications are left alone, so that a remote branch keeps precedence over a local one.
+     */
+    Collection<Revision> preferNotBuilt(boolean isPollCall, String branchSpec, Collection<Revision> revisions,
+                                        TaskListener listener, BuildData data) {
+        if (isPollCall || data == null || revisions.size() < 2 || isAdvancedSpec(branchSpec) || branchSpec.contains("/")) {
+            return revisions;
+        }
+        Collection<Revision> notBuilt = new LinkedHashSet<>();
+        for (Revision revision : revisions) {
+            if (!data.hasBeenBuilt(revision.getSha1())) {
+                notBuilt.add(revision);
             }
         }
-
-        return revisions;
+        if (notBuilt.isEmpty()) {
+            return revisions;
+        }
+        verbose(listener, "Preferring revisions not built yet: {0}", notBuilt);
+        return notBuilt;
     }
 
     private Collection<Revision> getHeadRevision(boolean isPollCall, String singleBranch, GitClient git, TaskListener listener, BuildData data) throws InterruptedException {
